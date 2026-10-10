@@ -1543,6 +1543,120 @@ def test_export_attendee_filter():
     check(report2.skipped == 2, f"expected 2 skipped (Shell + untagged), got {report2.skipped}")
 
 
+def test_export_tag_filter():
+    """Export only creates copies for events matching selected tags/labels."""
+    target = FakeTargetEntity()
+    work_event = make_source_event(uuid="work-1", title="Work Meeting")
+    work_event.label_name = "Work"
+    work_event.label_id = 1
+
+    personal_event = make_source_event(uuid="pers-1", title="Doctor Visit")
+    personal_event.label_name = "Personal"
+    personal_event.label_id = 2
+
+    untagged_event = make_source_event(uuid="none-1", title="Untagged Event")
+    untagged_event.label_name = None
+    untagged_event.label_id = None
+
+    # 1. Filter set to Work only, untagged included
+    manager, coordinator, store, hass = make_manager(
+        target,
+        [work_event, personal_event, untagged_event],
+        export_tags=["Work"],
+        export_include_untagged_tags=True,
+    )
+    report = ha_stub.run(manager.async_run(reason="manual"))
+    check(report.ok, str(report.errors))
+    check(report.created == 2, f"expected 2 created (Work + untagged), got {report.created}")
+    check(report.skipped == 1, f"expected 1 skipped (Personal), got {report.skipped}")
+
+    # 2. Filter set to Work only, untagged EXCLUDED
+    target2 = FakeTargetEntity()
+    manager2, coordinator2, store2, hass2 = make_manager(
+        target2,
+        [work_event, personal_event, untagged_event],
+        export_tags=["Work"],
+        export_include_untagged_tags=False,
+    )
+    report2 = ha_stub.run(manager2.async_run(reason="manual"))
+    check(report2.ok, str(report2.errors))
+    check(report2.created == 1, f"expected 1 created (Work only), got {report2.created}")
+    check(report2.skipped == 2, f"expected 2 skipped (Personal + untagged), got {report2.skipped}")
+
+    # 3. Filter set by numeric label ID "1"
+    target3 = FakeTargetEntity()
+    manager3, coordinator3, store3, hass3 = make_manager(
+        target3,
+        [work_event, personal_event, untagged_event],
+        export_tags=["1"],
+        export_include_untagged_tags=False,
+    )
+    report3 = ha_stub.run(manager3.async_run(reason="manual"))
+    check(report3.ok, str(report3.errors))
+    check(report3.created == 1, f"expected 1 created (Work id 1), got {report3.created}")
+
+
+def test_export_combined_user_and_tag_filter():
+    """Export evaluates user and tag combinations under AND vs OR modes."""
+    # Event 1: Joshua + Work
+    e1 = make_source_event(uuid="e1", title="Joshua Work")
+    e1.attendee_names = ["Joshua"]
+    e1.attendee_ids = [101]
+    e1.label_name = "Work"
+    e1.label_id = 1
+
+    # Event 2: Joshua + Personal
+    e2 = make_source_event(uuid="e2", title="Joshua Personal")
+    e2.attendee_names = ["Joshua"]
+    e2.attendee_ids = [101]
+    e2.label_name = "Personal"
+    e2.label_id = 2
+
+    # Event 3: Shell + Work
+    e3 = make_source_event(uuid="e3", title="Shell Work")
+    e3.attendee_names = ["Shell"]
+    e3.attendee_ids = [102]
+    e3.label_name = "Work"
+    e3.label_id = 1
+
+    # Event 4: Shell + Personal
+    e4 = make_source_event(uuid="e4", title="Shell Personal")
+    e4.attendee_names = ["Shell"]
+    e4.attendee_ids = [102]
+    e4.label_name = "Personal"
+    e4.label_id = 2
+
+    all_events = [e1, e2, e3, e4]
+
+    # Test AND mode (FILTER_MODE_ALL) -> only e1 (Joshua + Work) matches
+    target_and = FakeTargetEntity()
+    manager_and, _, _, _ = make_manager(
+        target_and,
+        all_events,
+        export_attendees=["Joshua"],
+        export_tags=["Work"],
+        export_filter_mode=const.FILTER_MODE_ALL,
+    )
+    report_and = ha_stub.run(manager_and.async_run(reason="manual"))
+    check(report_and.ok, str(report_and.errors))
+    check(report_and.created == 1, f"AND mode expected 1 created (e1 only), got {report_and.created}")
+    check(report_and.skipped == 3, f"AND mode expected 3 skipped, got {report_and.skipped}")
+
+    # Test OR mode (FILTER_MODE_ANY) -> e1, e2, e3 match; e4 skipped
+    target_or = FakeTargetEntity()
+    manager_or, _, _, _ = make_manager(
+        target_or,
+        all_events,
+        export_attendees=["Joshua"],
+        export_tags=["Work"],
+        export_filter_mode=const.FILTER_MODE_ANY,
+    )
+    report_or = ha_stub.run(manager_or.async_run(reason="manual"))
+    check(report_or.ok, str(report_or.errors))
+    check(report_or.created == 3, f"OR mode expected 3 created (e1, e2, e3), got {report_or.created}")
+    check(report_or.skipped == 1, f"OR mode expected 1 skipped (e4), got {report_or.skipped}")
+
+
 def test_all_modules_import():
     """Every integration module can be imported."""
     for name in (
@@ -1622,6 +1736,8 @@ TESTS = [
     test_calendar_entity_rrule_validation,
     test_options_from_entry,
     test_export_attendee_filter,
+    test_export_tag_filter,
+    test_export_combined_user_and_tag_filter,
     test_all_modules_import,
 ]
 

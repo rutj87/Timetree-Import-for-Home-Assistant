@@ -50,6 +50,7 @@ from .const import (
     DOMAIN,
     EVENT_CONFLICT_DETECTED,
     EVENT_EXPORT_COMPLETED,
+    FILTER_MODE_ANY,
     RESOLUTION_IGNORE,
     RESOLUTION_SKIP,
     SIGNAL_STORE_UPDATED,
@@ -526,9 +527,9 @@ class ExportManager:
                 # copy must not be mistaken for a deletion.
                 report.skipped += 1
                 continue
-            if source_event is not None and not self._matches_export_attendees(source_event):
+            if source_event is not None and not self._matches_export_filters(source_event):
                 if record is not None and record.exported:
-                    # Previously exported, but attendee unselected: treat as removed
+                    # Previously exported, but no longer matches filters: treat as removed
                     source_event = None
                 else:
                     report.skipped += 1
@@ -653,6 +654,43 @@ class ExportManager:
         event_ids = {str(uid).strip().lower() for uid in event.attendee_ids}
         event_names = {str(name).strip().lower() for name in event.attendee_names}
         return bool((event_ids | event_names) & selected_set)
+
+    def _matches_export_tags(self, event: TimeTreeEvent) -> bool:
+        """Return True when an event matches the tag/label export filter."""
+        selected = self.options.export_tags
+        if not selected:
+            return True
+        if (event.label_id is None or event.label_id == 0) and not event.label_name:
+            return self.options.export_include_untagged_tags
+        selected_set = {str(item).strip().lower() for item in selected}
+        event_ids = (
+            {str(event.label_id).strip().lower()}
+            if event.label_id is not None
+            else set()
+        )
+        event_names = (
+            {event.label_name.strip().lower()} if event.label_name else set()
+        )
+        return bool((event_ids | event_names) & selected_set)
+
+    def _matches_export_filters(self, event: TimeTreeEvent) -> bool:
+        """Return True when an event matches the configured export filters."""
+        has_user_filter = bool(self.options.export_attendees)
+        has_tag_filter = bool(self.options.export_tags)
+        if not has_user_filter and not has_tag_filter:
+            return True
+
+        user_match = self._matches_export_attendees(event)
+        tag_match = self._matches_export_tags(event)
+
+        if has_user_filter and has_tag_filter:
+            if self.options.export_filter_mode == FILTER_MODE_ANY:
+                return user_match or tag_match
+            return user_match and tag_match
+
+        if has_user_filter:
+            return user_match
+        return tag_match
 
     def _source_state(self, event: TimeTreeEvent) -> EventState:
         """Return the comparable state of a TimeTree event."""
