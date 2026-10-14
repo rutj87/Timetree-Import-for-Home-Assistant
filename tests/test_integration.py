@@ -1766,6 +1766,63 @@ def test_export_import_unmanaged_description_hashtags():
     check(p3["label_id"] == 10, f"expected label_id 10, got {p3.get('label_id')}")
 
 
+def test_export_update_existing_event_description_syncs_back():
+    """Editing the description of an existing exported event syncs back to TimeTree."""
+    target = FakeTargetEntity()
+    event = make_source_event(uuid="evt-update-1", title="Original Meeting")
+    event.label_id = 2
+    event.attendee_ids = [102]
+    event.note = "Original note"
+
+    manager, coordinator, store, hass = make_manager(
+        target,
+        [event],
+        export_direction=const.DIRECTION_TWO_WAY,
+        conflict_policy=const.POLICY_TARGET_WINS,
+    )
+    coordinator._labels = {
+        "42": {
+            1: "Everyone",
+            2: "Shell",
+            3: "Joshua",
+            6: "Nate",
+        }
+    }
+    coordinator._user_names = {
+        "42": {
+            101: "Joshua",
+            102: "Shell",
+        }
+    }
+
+    # First run exports event to target
+    ha_stub.run(manager.async_run(reason="manual"))
+    check(len(target.created) == 1)
+    target_event = target.events[0]
+
+    # Now edit description in target (Google Calendar)
+    # 1. Edit notes without changing tags: preserves label 2 and attendee 102
+    target_event.description = conflicts.add_marker("Updated notes without tags", "evt-update-1")
+    report = ha_stub.run(manager.async_run(reason="manual"))
+    check(report.ok, str(report.errors))
+    check(report.updated == 1, report.summary())
+    check(len(coordinator.updated) == 1)
+    _, uid1, p1 = coordinator.updated[-1]
+    check(uid1 == "evt-update-1")
+    check(p1["label_id"] == 2, f"expected label_id 2 preserved, got {p1.get('label_id')}")
+    check(102 in p1["attendees"], f"expected attendee 102 preserved, got {p1.get('attendees')}")
+
+    # 2. Edit description with #Nate: updates label_id to 6!
+    target_event.description = conflicts.add_marker("Updated notes with tag #Nate", "evt-update-1")
+    report2 = ha_stub.run(manager.async_run(reason="manual"))
+    check(report2.ok, str(report2.errors))
+    check(report2.updated == 1, report2.summary())
+    check(len(coordinator.updated) == 2)
+    _, uid2, p2 = coordinator.updated[-1]
+    check(uid2 == "evt-update-1")
+    check(p2["label_id"] == 6, f"expected label_id 6, got {p2.get('label_id')}")
+
+
 def test_all_modules_import():
     """Every integration module can be imported."""
     for name in (
@@ -1903,6 +1960,7 @@ TESTS = [
     test_export_tag_filter,
     test_export_combined_user_and_tag_filter,
     test_export_import_unmanaged_description_hashtags,
+    test_export_update_existing_event_description_syncs_back,
     test_all_modules_import,
     test_transport_module_level_imports,
     test_create_transport_fallback_without_curl_cffi,

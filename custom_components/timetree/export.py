@@ -881,7 +881,7 @@ class ExportManager:
         self, calendar_id: str, uuid: str, state: EventState
     ) -> None:
         """Write the target state back into TimeTree."""
-        payload = self._payload_from_state(state, calendar_id)
+        payload = self._payload_from_state(state, calendar_id, uuid=uuid)
         await self.coordinator.async_update_event(calendar_id, uuid, payload)
 
     async def _async_create_source(
@@ -1052,7 +1052,10 @@ class ExportManager:
         return matched_label_id, matched_attendee_ids
 
     def _payload_from_state(
-        self, state: EventState, calendar_id: str | None = None
+        self,
+        state: EventState,
+        calendar_id: str | None = None,
+        uuid: str | None = None,
     ) -> dict[str, Any]:
         """Convert a stored state into a TimeTree write payload."""
         start = parse_iso_value(state.start, state.all_day)
@@ -1066,6 +1069,15 @@ class ExportManager:
             if cal_id
             else (None, [])
         )
+        if uuid and getattr(self.coordinator, "data", None) is not None:
+            found = self.coordinator.data.find_event(uuid)
+            if found is not None:
+                existing_event = found[1]
+                if label_id is None:
+                    label_id = existing_event.label_id
+                if not attendees and existing_event.attendee_ids:
+                    attendees = existing_event.attendee_ids
+
         return build_event_payload(
             title=state.summary,
             note=state.description,
