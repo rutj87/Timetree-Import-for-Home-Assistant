@@ -1044,6 +1044,8 @@ class FakeCoordinator:
         self.created: list[tuple[str, dict]] = []
         self.updated: list[tuple[str, str, dict]] = []
         self.deleted: list[tuple[str, str]] = []
+        self._labels: dict[str, dict[int, str]] = {}
+        self._user_names: dict[str, dict[int, str]] = {}
 
     @property
     def calendar_ids(self):
@@ -1685,6 +1687,85 @@ def test_export_combined_user_and_tag_filter():
     check(report_or.skipped == 1, f"OR mode expected 1 skipped (e4), got {report_or.skipped}")
 
 
+def test_export_import_unmanaged_description_hashtags():
+    """Unmanaged events from target parse single and multiple hashtags from description."""
+    target = FakeTargetEntity()
+    # Event 1: Single hashtag matching label "Nate"
+    target.events.append(
+        calendar_mod.CalendarEvent(
+            summary="Soccer Practice",
+            start=datetime.now(VIENNA) + timedelta(days=2),
+            end=datetime.now(VIENNA) + timedelta(days=2, hours=1),
+            uid="gcal-nate-1",
+            description="Bring shin pads\n#Nate",
+        )
+    )
+    # Event 2: Multiple hashtags matching label Joshua and members Joshua + Shell
+    target.events.append(
+        calendar_mod.CalendarEvent(
+            summary="Dentist Checkup",
+            start=datetime.now(VIENNA) + timedelta(days=3),
+            end=datetime.now(VIENNA) + timedelta(days=3, hours=1),
+            uid="gcal-multi-2",
+            description="Annual checkup #Joshua, #Shell.",
+        )
+    )
+    # Event 3: Hashtag with special characters #R&C
+    target.events.append(
+        calendar_mod.CalendarEvent(
+            summary="Anniversary Dinner",
+            start=datetime.now(VIENNA) + timedelta(days=4),
+            end=datetime.now(VIENNA) + timedelta(days=4, hours=2),
+            uid="gcal-rc-3",
+            description="Table reserved #R&C",
+        )
+    )
+
+    manager, coordinator, store, hass = make_manager(
+        target,
+        [],
+        export_direction=const.DIRECTION_TWO_WAY,
+        import_unmanaged=True,
+    )
+    coordinator._labels = {
+        "42": {
+            1: "Everyone",
+            2: "Shell",
+            3: "Joshua",
+            6: "Nate",
+            10: "R&C",
+        }
+    }
+    coordinator._user_names = {
+        "42": {
+            54255618: "Joshua",
+            54242595: "Shell",
+        }
+    }
+
+    report = ha_stub.run(manager.async_run(reason="manual"))
+    check(report.ok, str(report.errors))
+    check(report.imported == 3, report.summary())
+    check(len(coordinator.created) == 3)
+
+    # Check Event 1 payload (Nate -> label_id 6)
+    _, p1 = coordinator.created[0]
+    check(p1["title"] == "Soccer Practice", p1["title"])
+    check(p1["label_id"] == 6, f"expected label_id 6, got {p1.get('label_id')}")
+
+    # Check Event 2 payload (Joshua + Shell -> label_id 3, attendees [54255618, 54242595])
+    _, p2 = coordinator.created[1]
+    check(p2["title"] == "Dentist Checkup", p2["title"])
+    check(p2["label_id"] == 3, f"expected label_id 3, got {p2.get('label_id')}")
+    check(54255618 in p2["attendees"], f"expected Joshua in attendees: {p2.get('attendees')}")
+    check(54242595 in p2["attendees"], f"expected Shell in attendees: {p2.get('attendees')}")
+
+    # Check Event 3 payload (R&C -> label_id 10)
+    _, p3 = coordinator.created[2]
+    check(p3["title"] == "Anniversary Dinner", p3["title"])
+    check(p3["label_id"] == 10, f"expected label_id 10, got {p3.get('label_id')}")
+
+
 def test_all_modules_import():
     """Every integration module can be imported."""
     for name in (
@@ -1821,6 +1902,7 @@ TESTS = [
     test_export_attendee_filter,
     test_export_tag_filter,
     test_export_combined_user_and_tag_filter,
+    test_export_import_unmanaged_description_hashtags,
     test_all_modules_import,
     test_transport_module_level_imports,
     test_create_transport_fallback_without_curl_cffi,
