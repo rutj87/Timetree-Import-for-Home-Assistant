@@ -662,18 +662,22 @@ class ExportManager:
         selected = self.options.export_tags
         if not selected:
             return True
-        if (event.label_id is None or event.label_id == 0) and not event.label_name:
-            return self.options.export_include_untagged_tags
         selected_set = {str(item).strip().lower() for item in selected}
         event_ids = (
             {str(event.label_id).strip().lower()}
-            if event.label_id is not None
+            if event.label_id is not None and event.label_id != 0
             else set()
         )
         event_names = (
-            {event.label_name.strip().lower()} if event.label_name else set()
+            {event.label_name.strip().lower()}
+            if event.label_name and event.label_name.strip()
+            else set()
         )
-        return bool((event_ids | event_names) & selected_set)
+        if (event_ids | event_names) & selected_set:
+            return True
+        if not event_names:
+            return self.options.export_include_untagged_tags
+        return False
 
     def _matches_export_filters(self, event: TimeTreeEvent) -> bool:
         """Return True when an event matches the configured export filters."""
@@ -1022,7 +1026,7 @@ class ExportManager:
         matched_label_id: int | None = None
         matched_attendee_ids: list[int] = []
 
-        # 1. Parse hashtags: #tag (e.g. #Nate, #Shell, #R&C, #Everyone)
+        # 1. Parse hashtags: #tag (e.g. #Work, #Family, #A&B, #Everyone)
         raw_tags = re.findall(r"#([^\s#]+)", description)
         for raw in raw_tags:
             cleaned = raw.rstrip(".,;:!?)\"']").strip().lower()
@@ -1033,6 +1037,7 @@ class ExportManager:
             if cleaned in user_lookup and user_lookup[cleaned] not in matched_attendee_ids:
                 matched_attendee_ids.append(user_lookup[cleaned])
 
+        hashtag_attendees_found = bool(matched_attendee_ids)
         # 2. Also check key-value lines: tag: ..., label: ..., TimeTree label: ...
         for line in description.splitlines():
             line_str = line.strip()
@@ -1042,14 +1047,27 @@ class ExportManager:
                     val = line_str[len(prefix) :].strip().lower()
                     if matched_label_id is None and val in label_lookup:
                         matched_label_id = label_lookup[val]
-            for prefix in ("timetree attendees:", "attendees:"):
-                if lower.startswith(prefix):
-                    names = [n.strip().lower() for n in line_str[len(prefix) :].split(",")]
-                    for n in names:
-                        if n in user_lookup and user_lookup[n] not in matched_attendee_ids:
-                            matched_attendee_ids.append(user_lookup[n])
+            if not hashtag_attendees_found:
+                for prefix in ("timetree attendees:", "attendees:"):
+                    if lower.startswith(prefix):
+                        names = [n.strip().lower() for n in line_str[len(prefix) :].split(",")]
+                        for n in names:
+                            if n in user_lookup and user_lookup[n] not in matched_attendee_ids:
+                                matched_attendee_ids.append(user_lookup[n])
 
         return matched_label_id, matched_attendee_ids
+
+    @staticmethod
+    def _strip_exported_details(description: str) -> str:
+        """Remove auto-generated TimeTree detail footer lines before writing note back."""
+        if not description:
+            return ""
+        kept = [
+            line
+            for line in description.splitlines()
+            if not line.strip().lower().startswith(("timetree label:", "timetree attendees:"))
+        ]
+        return "\n".join(kept).rstrip()
 
     def _payload_from_state(
         self,
@@ -1080,7 +1098,7 @@ class ExportManager:
 
         return build_event_payload(
             title=state.summary,
-            note=state.description,
+            note=self._strip_exported_details(state.description),
             location=state.location,
             start=start,
             end=end,

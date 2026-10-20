@@ -124,7 +124,7 @@ class TimeTreeCoordinator(DataUpdateCoordinator[TimeTreeData]):
             self._user_names[calendar.calendar_id] = calendar.users
             self._alias_codes[calendar.calendar_id] = calendar.alias_code
             try:
-                labels_map = await self._hass.async_add_executor_job(
+                labels_map = await self.hass.async_add_executor_job(
                     self.api._get_labels, calendar.calendar_id
                 )
                 self._labels[calendar.calendar_id] = {
