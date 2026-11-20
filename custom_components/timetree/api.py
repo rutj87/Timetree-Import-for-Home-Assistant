@@ -364,7 +364,7 @@ class TimeTreeApi:
         if cached is not None:
             return cached
         try:
-            data = self._request("GET", f"/calendar/{calendar_id}/virtual_users")
+            data = self._request("GET", f"/calendars/{calendar_id}/virtual_users")
         except TimeTreeApiError as err:
             _LOGGER.debug(
                 "Could not load virtual users for %s: %s", calendar_id, err

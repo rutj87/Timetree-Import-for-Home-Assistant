@@ -329,7 +329,7 @@ def test_api_virtual_users_and_attendee_prep():
     client._request = fake_request
     check(client._get_virtual_users("cal-1") == {"9001": "Bob"})
     check(client._get_virtual_users("cal-1") == {"9001": "Bob"})
-    check(calls == ["/calendar/cal-1/virtual_users"])
+    check(calls == ["/calendars/cal-1/virtual_users"])
 
     def failing_request(method, path, **kwargs):
         raise api_mod.TimeTreeApiError("boom")
